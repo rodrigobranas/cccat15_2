@@ -1,59 +1,27 @@
 import crypto from "crypto";
-import pgp from "pg-promise";
 import { validateCpf } from "./validateCpf";
+import AccountDAO, { AccountDAODatabase } from "./AccountDAO";
+import MailerGateway from "./MailerGateway";
 
-export async function signup (input: any): Promise<any> {
-	const connection = pgp()("postgres://postgres:123456@localhost:5432/app");
-	try {
-		const id = crypto.randomUUID();
+export default class Signup {
+	// Port
+	constructor (readonly accountDAO: AccountDAO) {
+	}
 
-		const [acc] = await connection.query("select * from cccat15.account where email = $1", [input.email]);
-		if (!acc) {
-
-			if (input.name.match(/[a-zA-Z] [a-zA-Z]+/)) {
-				if (input.email.match(/^(.+)@(.+)$/)) {
-
-					if (validateCpf(input.cpf)) {
-						if (input.isDriver) {
-							if (input.carPlate.match(/[A-Z]{3}[0-9]{4}/)) {
-								await connection.query("insert into cccat15.account (account_id, name, email, cpf, car_plate, is_passenger, is_driver) values ($1, $2, $3, $4, $5, $6, $7)", [id, input.name, input.email, input.cpf, input.carPlate, !!input.isPassenger, !!input.isDriver]);
-								
-								const obj = {
-									accountId: id
-								};
-								return obj;
-							} else {
-								// invalid car plate
-								return -5;
-							}
-						} else {
-							await connection.query("insert into cccat15.account (account_id, name, email, cpf, car_plate, is_passenger, is_driver) values ($1, $2, $3, $4, $5, $6, $7)", [id, input.name, input.email, input.cpf, input.carPlate, !!input.isPassenger, !!input.isDriver]);
-
-							const obj = {
-								accountId: id
-							};
-							return obj;
-						}
-					} else {
-						// invalid cpf
-						return -1;
-					}
-				} else {
-					// invalid email
-					return -2;
-				}
-
-			} else {
-				// invalid name
-				return -3;
-			}
-
-		} else {
-			// already exists
-			return -4;
-		}
-
-	} finally {
-		await connection.$pool.end();
+	async execute (input: any) {
+		input.accountId = crypto.randomUUID();
+		const accountDAO = new AccountDAODatabase();
+		const existingAccount = await accountDAO.getByEmail(input.email);
+		if (existingAccount) throw new Error("Account already exists");
+		if (!input.name.match(/[a-zA-Z] [a-zA-Z]+/)) throw new Error("Invalid name");
+		if (!input.email.match(/^(.+)@(.+)$/)) throw new Error("Invalid email");
+		if (!validateCpf(input.cpf)) throw new Error("Invalid cpf");
+		if (input.isDriver && !input.carPlate.match(/[A-Z]{3}[0-9]{4}/)) throw new Error("Invalid car plate");
+		await accountDAO.save(input);
+		const mailerGateway = new MailerGateway();
+		mailerGateway.send("Welcome", input.email, "Use this link to confirm your account");
+		return {
+			accountId: input.accountId
+		};
 	}
 }
